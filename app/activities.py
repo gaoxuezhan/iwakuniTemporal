@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 import re
 import time
-import urllib.error
 import urllib.request
 from typing import Any
 
@@ -23,6 +23,10 @@ PROXY_SOURCE_URLS = [
 # 只保留最基础的 IP:PORT 形式。
 # 这样后面的示例更容易看懂，也方便你后续接真实测试器。
 IP_PORT_PATTERN = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}$")
+
+# L0 的默认超时时间。
+# 这里不要设太大，否则首次批量筛选会非常慢。
+L0_CONNECT_TIMEOUT_SECONDS = 1.5
 
 
 def _download_text(url: str, timeout: int = 10) -> str:
@@ -70,6 +74,50 @@ def _normalize_proxy_line(line: str) -> str | None:
         return None
 
     return candidate
+
+
+async def _tcp_connect_probe(host: str, port: int, timeout_seconds: float) -> dict[str, Any]:
+    """执行真实的 TCP 建连探测。
+
+    这就是当前示例里的 L0 定义：
+    - 能在超时内建立 TCP 连接，视为 L0 通过
+    - 不能建立连接，视为 L0 失败
+
+    这是一个非常基础但很有用的第一层筛选，能够快速剔除：
+    - 端口根本不通的代理
+    - 已经离线的代理
+    - 响应极慢的代理
+    """
+
+    started = time.perf_counter()
+    writer = None
+
+    try:
+        connect_task = asyncio.open_connection(host=host, port=port)
+        reader, writer = await asyncio.wait_for(connect_task, timeout=timeout_seconds)
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+
+        # 这里只做“建连是否成功”的判断，不做任何协议级通信。
+        # 因此 reader 这里先不使用，但保留变量名便于以后扩展。
+        _ = reader
+
+        return {
+            "passed": True,
+            "latency_ms": latency_ms,
+            "error": None,
+        }
+    except Exception as exc:
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        return {
+            "passed": False,
+            "latency_ms": latency_ms,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
 
 
 @activity.defn
@@ -152,21 +200,40 @@ async def run_level_test(proxy: str, level: str) -> dict[str, Any]:
     - proxy: 当前要测试的代理地址
     - level: 测试级别，例如 L0 / L1 / L2
 
-    这里仍然使用随机数模拟测试结果。
-    在真实项目中，这里应该替换成：
-    - TCP 连通性测试
-    - HTTP 请求测试
-    - HTTPS/TLS 测试
-    - 匿名性测试
-    - 延迟与稳定性测试
+    当前版本的约定：
+    - L0：真实 TCP 建连测试
+    - L1 ~ L5：仍然使用随机数模拟
+
+    这样做的原因是：
+    - 先把“第一层真实筛选”补上
+    - 后续再逐层把 L1、L2、L3... 替换成更真实的协议测试
     """
 
-    # 模拟测试耗时。
+    host, port_text = proxy.split(":")
+    port = int(port_text)
+
+    if level == "L0":
+        l0_result = await _tcp_connect_probe(
+            host=host,
+            port=port,
+            timeout_seconds=L0_CONNECT_TIMEOUT_SECONDS,
+        )
+
+        return {
+            "proxy": proxy,
+            "level": level,
+            "passed": l0_result["passed"],
+            "latency_ms": l0_result["latency_ms"],
+            "error": l0_result["error"],
+            "check_type": "tcp_connect",
+            "checked_at": int(time.time()),
+        }
+
+    # L1 以后目前仍然是演示版模拟逻辑。
     await asyncio.sleep(0.2)
 
     # 为了让示例更接近真实情况，级别越高，通过概率越低。
     pass_rate_map = {
-        "L0": 0.95,
         "L1": 0.85,
         "L2": 0.75,
         "L3": 0.60,
@@ -184,6 +251,8 @@ async def run_level_test(proxy: str, level: str) -> dict[str, Any]:
         "level": level,
         "passed": passed,
         "latency_ms": latency_ms,
+        "error": None if passed else "simulated_failure",
+        "check_type": "simulated",
         "checked_at": int(time.time()),
     }
 
@@ -217,6 +286,8 @@ async def calculate_proxy_score(proxy: str, level_results: list[dict[str, Any]])
                 "level": item["level"],
                 "passed": item["passed"],
                 "latency_ms": item["latency_ms"],
+                "error": item.get("error"),
+                "check_type": item.get("check_type"),
                 "level_score": level_score,
             }
         )

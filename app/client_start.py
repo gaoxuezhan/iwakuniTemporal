@@ -20,9 +20,9 @@ async def main() -> None:
 
     client = await Client.connect("localhost:7233")
 
-    # 真实抓取时，列表可能比较大。
-    # 示例版先限制 200 条，方便观察结果与调试。
-    max_proxies = 200
+    # 真实 L0 建连测试比随机模拟更慢。
+    # 为了让你第一次跑示例时不用等太久，这里先把默认数量降到 50。
+    max_proxies = 50
 
     # 每次运行都生成唯一 ID，避免 Workflow ID 已存在导致启动失败。
     workflow_id = f"batch-proxy-workflow-{uuid4().hex[:8]}"
