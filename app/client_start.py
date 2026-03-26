@@ -20,9 +20,9 @@ async def main() -> None:
 
     client = await Client.connect("localhost:7233")
 
-    # 真实 L0 建连测试比随机模拟更慢。
-    # 为了让你第一次跑示例时不用等太久，这里先把默认数量降到 50。
-    max_proxies = 50
+    # 现在 L0 和 L1 都是真实测试。
+    # 而当前批量流程还是串行子流程，所以默认先收紧到 20 条。
+    max_proxies = 20
 
     # 每次运行都生成唯一 ID，避免 Workflow ID 已存在导致启动失败。
     workflow_id = f"batch-proxy-workflow-{uuid4().hex[:8]}"
