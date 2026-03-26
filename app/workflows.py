@@ -69,10 +69,11 @@ class BatchProxyWorkflow:
     """
 
     @workflow.run
-    async def run(self) -> dict[str, Any]:
+    async def run(self, max_proxies: int = 200) -> dict[str, Any]:
         raw_sources = await workflow.execute_activity(
             fetch_proxy_sources,
-            start_to_close_timeout=timedelta(seconds=10),
+            args=[max_proxies],
+            start_to_close_timeout=timedelta(seconds=30),
         )
 
         proxies = await workflow.execute_activity(
@@ -89,7 +90,8 @@ class BatchProxyWorkflow:
             child_result = await workflow.execute_child_workflow(
                 TestSingleProxyWorkflow.run,
                 item["proxy"],
-                id=f"test-proxy-{item['host']}-{item['port']}",
+                # 子流程 ID 里带上父流程 ID，避免多次运行时发生冲突。
+                id=f"{workflow.info().workflow_id}-test-{item['host']}-{item['port']}",
             )
             results.append(child_result)
 
@@ -101,6 +103,7 @@ class BatchProxyWorkflow:
 
         return {
             "total": len(results),
+            "candidate_count": len(candidates),
             "candidates": candidates,
             "all_results": results,
         }

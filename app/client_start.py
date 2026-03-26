@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from uuid import uuid4
 
 from temporalio.client import Client
 
@@ -19,9 +20,17 @@ async def main() -> None:
 
     client = await Client.connect("localhost:7233")
 
+    # 真实抓取时，列表可能比较大。
+    # 示例版先限制 200 条，方便观察结果与调试。
+    max_proxies = 200
+
+    # 每次运行都生成唯一 ID，避免 Workflow ID 已存在导致启动失败。
+    workflow_id = f"batch-proxy-workflow-{uuid4().hex[:8]}"
+
     handle = await client.start_workflow(
         BatchProxyWorkflow.run,
-        id="batch-proxy-workflow-demo",
+        max_proxies,
+        id=workflow_id,
         task_queue="proxy-task-queue",
     )
 
